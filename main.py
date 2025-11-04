@@ -1,64 +1,63 @@
-# --- Розділ 1: Імпорти ---
-# Імпортуємо бібліотеки, які ми встановили
-import pandas as pd  # Для роботи з даними (таблицями/часовими рядами)
-import matplotlib.pyplot as plt  # Для графіків
-import numpy as np  # Для математичних операцій (потрібен для .reshape та create_sequences)
-from sklearn.preprocessing import MinMaxScaler  # Для нормалізації
+# --- Розділ 1: Імпорт необхідних бібліотек ---
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.preprocessing import MinMaxScaler
+import math
+import time
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
+from sklearn.metrics import mean_squared_error
 
 print("--- Скрипт запущено. Початок Частини 1 ---")
 
 # --- Розділ 2: Завантаження та підготовка даних ---
-# (Відповідає п. 1.1 "Оберіть часовий ряд")
-file_path = 'weatherHistory.csv'  # Назва вашого файлу
+file_path = 'weatherHistory.csv'  # Назва файлу
 try:
-    # 1. Просто завантажуємо CSV
+    # 1. Завантаження CSV
     data = pd.read_csv(file_path)
-
-    # 2. Конвертуємо 'Formatted Date' в datetime.
+    # 2. Конвертація 'Formatted Date' в datetime
     data['Formatted Date'] = pd.to_datetime(data['Formatted Date'], utc=True)
-
-    # 3. Встановлюємо дату як індекс (це зручно для resample)
+    # 3. Встановлення дати як індекс
     data.set_index('Formatted Date', inplace=True)
-
-    # 4. Обираємо наш цільовий стовпець
+    # 4. Вибір цільового стовпця
     ts_hourly = data['Temperature (C)']
 except Exception as e:
     print(f"Помилка при завантаженні або обробці файлу: {e}")
     exit()
 
-# 5. ВАЖЛИВО: Дані погодинні. Перетворимо їх на ЩОДЕННІ МАКСИМАЛЬНІ.
+# 5. Дані погодинні. Агрегуємо їх у щоденні максимальні.
 # .resample('D') - групує дані по Днях (Daily)
 # .max() - беремо максимальне значення за кожен день
 ts_daily_max = ts_hourly.resample('D').max()
 
-# 6. Видаляємо пропуски (NaN), якщо вони з'явились (напр. день без даних)
+# 6. Видаляємо пропуски (NaN)
 ts_daily_max = ts_daily_max.dropna()
 
 print(f"Дані завантажено та перетворено на щоденні (всього {len(ts_daily_max)} записів).\n")
-# Збережемо "сирі" значення для п. 1.5
+# Зберігаємо "сирі" значення для подальшої роботи
 raw_data_values = ts_daily_max.values
 
 # --- Розділ 3: Статистичний аналіз (Завдання 1.1) ---
 print("--- Завдання 1.1: Статистичні показники ряду ---")
 
-# .describe() рахує більшість потрібних нам показників
+# Розрахунок основних статистичних показників
 stats = ts_daily_max.describe()
 print(stats)
 
 # Додатково рахуємо асиметрію та куртозис
 skewness = ts_daily_max.skew()
-print(f"Асиметрія (Skewness): {skewness:.3f}")  #
-
+print(f"Асиметрія (Skewness): {skewness:.3f}")
 kurtosis = ts_daily_max.kurt()
-print(f"Куртозис (Kurtosis): {kurtosis:.3f}")  #
+print(f"Куртозис (Kurtosis): {kurtosis:.3f}")
 print("-" * 30 + "\n")
 
 # --- Розділ 4: Візуалізація даних (Завдання 1.2) ---
 print("--- Завдання 1.2: Побудова графіків ---")
 
-# Графік 1: Динаміка змін в часі [cite: 16]
-plt.figure(figsize=(14, 7))  # Встановлюємо розмір
-ts_daily_max.plot()  # Будуємо лінійний графік
+# Графік 1: Динаміка змін в часі
+plt.figure(figsize=(14, 7))
+ts_daily_max.plot()
 plt.title('Графік 1: Динаміка щоденної макс. температури (2006-2016)')
 plt.xlabel('Дата')
 plt.ylabel('Макс. Температура (°C)')
@@ -68,33 +67,26 @@ print("Збережено 'grafik_1_timeseries.png'")
 
 # Графік 2: Гістограма розподілу
 plt.figure(figsize=(10, 6))
-ts_daily_max.hist(bins=50)  # bins=50 - кількість стовпчиків
+ts_daily_max.hist(bins=50)
 plt.title('Графік 2: Гістограма розподілу щоденних макс. температур')
 plt.xlabel('Макс. Температура (°C)')
 plt.ylabel('Частота (кількість днів)')
 plt.savefig('grafik_2_histogram.png')  # Зберігаємо у файл
 print("Збережено 'grafik_2_histogram.png'")
 print("-" * 30 + "\n")
-# plt.show() # Можете розкоментувати цей рядок, якщо хочете, щоб графіки
-#            # показувались на екрані одразу після запуску скрипта
-
+# plt.show() # Розкоментувати, щоб показати графіки під час виконання
 
 # --- Розділ 5: Нормалізація (Завдання 1.3) ---
 print("--- Завдання 1.3: Нормалізація даних ---")
-# Обґрунтування:
-# 1. Аналіз статистики (Розділ 3) показав велике стандартне відхилення (std).
-# 2. Аналіз графіків (Розділ 4) показав не-нормальний, "двогорбий" розподіл.
-# 3. Висновок: Використовуємо MinMaxScaler для приведення даних до діапазону [0, 1].
 
-# 1. Scaler очікує 2D-масив. Перетворюємо [4019] -> [4019, 1]
-# (raw_data_values ми отримали в Розділі 2)
+# 1. Reshape даних для Scaler (потрібен 2D-масив)
 raw_data_2d = raw_data_values.reshape(-1, 1)
 
-# 2. Створюємо та "навчаємо" (fit_transform) scaler
+# 2. Створення та навчання MinMaxScaler
 scaler = MinMaxScaler(feature_range=(0, 1))
 data_normalized_2d = scaler.fit_transform(raw_data_2d)
 
-# 3. Повертаємо у зручний 1D-формат [4019] для функції "вікна"
+# 3. Повернення до 1D-масиву для подальшої обробки
 data_normalized_1d = data_normalized_2d.flatten()
 
 print(f"Дані нормалізовано. "
@@ -109,19 +101,13 @@ def create_sequences(data, n_steps):
     """
     Перетворює 1D-масив часового ряду у 2D-масив (X)
     послідовностей та 1D-масив (y) прогнозів.
-
     """
     X, y = [], []
-    # Ідемо по масиву, зупиняючись за n_steps до кінця
+    # Формуємо послідовності X та y
     for i in range(len(data) - n_steps):
-        # i - початок послідовності
-        # end_ix - кінець послідовності (не включно)
         end_ix = i + n_steps
-
-        # seq_x - це наші вхідні дані (n_steps штук) [34, 36, 35, 34, 31]
-        # seq_y - це наш прогноз (наступне значення) [28]
+        # seq_x - вхідна послідовність, seq_y - цільове значення
         seq_x, seq_y = data[i:end_ix], data[end_ix]
-
         X.append(seq_x)
         y.append(seq_y)
     return np.array(X), np.array(y)
@@ -132,72 +118,42 @@ print("Функцію create_sequences() створено.\n")
 # --- Розділ 7: Формування наборів даних (Завдання 1.5) ---
 print("--- Завдання 1.5: Формування 5 наборів даних ---")
 
-# Обираємо 5 розмірів вікна (n) згідно з завданням
+# Обираємо 5 розмірів вікна (n)
 n_steps_list = [7, 14, 30, 60, 90]  # напр: тиждень, 2 тижні, місяць, 2 міс, 3 міс
 
-# Створюємо "контейнери" (словники Python) для зберігання наших 10-ти наборів
-# (5 нормалізованих + 5 ненормалізованих)
+# Словники для зберігання наборів даних
 normalized_datasets = {}
 raw_datasets = {}
 
 for n in n_steps_list:
     print(f"Створюємо набори для n = {n}...")
-
-    # 1. Для нормалізованих даних (data_normalized_1d з Розділу 5)
+    # 1. Для нормалізованих даних
     X_norm, y_norm = create_sequences(data_normalized_1d, n)
     normalized_datasets[n] = (X_norm, y_norm)
-
-    # 2. Для ненормалізованих ("сирих") даних (raw_data_values з Розділу 2)
+    # 2. Для ненормалізованих ("сирих") даних
     X_raw, y_raw = create_sequences(raw_data_values, n)
     raw_datasets[n] = (X_raw, y_raw)
 
 print("\n--- Перевірка створених наборів ---")
-# Давайте подивимось, що вийшло, на прикладі n=30
+# Перевірка розмірності створених наборів (на прикладі n=30)
 n_example = 30
 X_check, y_check = normalized_datasets[n_example]
-
 print(f"Для n={n_example} (нормалізовані):")
-print(f"  Форма (shape) X: {X_check.shape}")  # Має бути (кількість, 30)
-print(f"  Форма (shape) y: {y_check.shape}")  # Має бути (кількість,)
-print(f"\n  Перша послідовність (X[0]): \n{X_check[0]}")
-print(f"  Перший прогноз (y[0]): \n{y_check[0]}")
+print(f"  Форма (shape) X: {X_check.shape}")
+print(f"  Форма (shape) y: {y_check.shape}")
 
-# Перевірка, що все логічно
-# y[0] має бути тим же значенням, що й data_normalized_1d[30]
-print(f"\n  Перевірочне значення (має бути = y[0]): \n{data_normalized_1d[n_example]}")
+print("\n--- Частина 1 Завершена ---")
 
-print("\n--- ✅ ЧАСТИНА 1 ПОВНІСТЮ ЗАВЕРШЕНА ---")
-print("Усі дані підготовлено. Можна переходити до Частини 2.")
+# --- Початок Частини 2: Моделювання ---
+print("\n\n--- Початок Частини 2: Моделювання ---")
 
-# ######################################################################
-# ######################################################################
-# ПОЧАТОК КОДУ ДЛЯ ЧАСТИНИ 2
-# (Додайте це в кінець вашого файлу main.py)
-# ######################################################################
-# ######################################################################
-
-print("\n\n--- ✅ ПОЧАТОК ЧАСТИНИ 2: МОДЕЛЮВАННЯ ---")
-
-# --- Розділ 8: Додаткові імпорти для Частини 2 ---
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense
-from sklearn.metrics import mean_squared_error
-import math  # Для розрахунку RMSE (корінь з MSE)
-import time  # Для вимірювання часу навчання
-
-# (Ми вже імпортували numpy as np, pandas as pd та MinMaxScaler раніше)
-
-
-# --- Розділ 9: Розбиття даних на вибірки (Завдання 2.1) ---
+# --- Розділ 8: Розбиття даних на вибірки (Завдання 2.1) ---
 print("--- Завдання 2.1: Підготовка до розбиття даних ---")
 
-# Для часових рядів КАТЕГОРИЧНО НЕ МОЖНА перемішувати дані (shuffle=True).
-# Ми повинні розбити їх послідовно.
-# Обираємо пропорції: 70% - навчання, 15% - валідація, 15% - тест.
+# Для часових рядів дані не можна перемішувати.
+# Пропорції: 70% - навчання, 15% - валідація, 15% - тест.
 train_percent = 0.7
 val_percent = 0.15
-# test_percent = 0.15 (вийде автоматично)
-
 print(f"Пропорції розбиття: {train_percent * 100}% train, {val_percent * 100}% validation, 15% test")
 
 
@@ -205,14 +161,10 @@ def split_sequences(X, y, train_pct, val_pct):
     """
     Розбиває X та y послідовно, без перемішування.
     """
-    # Загальний розмір
     total_samples = len(X)
-
-    # Визначаємо індекси для розбиття
     train_idx = int(total_samples * train_pct)
     val_idx = int(total_samples * (train_pct + val_pct))
 
-    # Розбиваємо дані
     X_train, y_train = X[:train_idx], y[:train_idx]
     X_val, y_val = X[train_idx:val_idx], y[train_idx:val_idx]
     X_test, y_test = X[val_idx:], y[val_idx:]
@@ -222,7 +174,7 @@ def split_sequences(X, y, train_pct, val_pct):
 
 print("Функцію split_sequences() створено.\n")
 
-# --- Розділ 10: Архітектура моделі LSTM (Завдання 2.2) ---
+# --- Розділ 9: Архітектура моделі LSTM (Завдання 2.2) ---
 print("--- Завдання 2.2: Створення функції для побудови моделі ---")
 
 
@@ -231,47 +183,33 @@ def build_model(n_steps_in, n_features_in=1):
     Створює та компілює модель LSTM "Багато-до-Одного".
     """
     model = Sequential()
-
-    # n_steps_in - це наш розмір вікна n (напр., 30)
-    # n_features_in - це 1, оскільки у нас лише 1 показник (температура)
+    # n_steps_in - розмір вікна, n_features_in - кількість ознак
     input_shape = (n_steps_in, n_features_in)
 
-    # Додаємо шар LSTM. 50 - це кількість нейронів (популярне значення)
-    # "return_sequences=False" (за замовчуванням) означає,
-    # що шар видасть лише останній вихід, що нам і потрібно.
+    # Шар LSTM з 50 нейронами.
+    # 'return_sequences=False' (за замовчуванням) означає,
+    # що шар видасть лише останній вихід.
     model.add(LSTM(50, activation='relu', input_shape=input_shape))
 
-    # Додаємо вихідний шар. 1 - тому що ми прогнозуємо 1 значення.
+    # Вихідний шар (1 нейрон для прогнозу 1 значення)
     model.add(Dense(1))
 
-    # Компілюємо модель. 'adam' - стандартний оптимізатор.
-    # 'mean_squared_error' (MSE) - найкраща функція втрат для регресії.
+    # Компіляція моделі
     model.compile(optimizer='adam', loss='mean_squared_error')
-
     return model
 
 
 print("Функцію build_model() створено.\n")
 
-# --- Розділ 11: Цикл експериментів (Завдання 2.3) ---
+# --- Розділ 10: Цикл експериментів (Завдання 2.3) ---
 print("--- Завдання 2.3: Запуск циклу експериментів ---")
 
-# Тут ми будемо зберігати результати
+# Список для зберігання результатів експериментів
 results_list = []
 
-# Використовуємо ті ж 'n', що й в Частині 1
-# n_steps_list = [7, 14, 30, 60, 90] (вже визначено в Частині 1)
+EPOCHS = 20  # Кількість епох навчання
+BATCH_SIZE = 32  # Розмір "пачки" даних
 
-# ВАЖЛИВО: Оскільки навчання нейромережі займає час,
-# для тестування можна взяти менший список:
-# n_steps_list_test = [7, 30]
-# ...або зменшити кількість епох
-EPOCHS = 20  # Кількість епох навчання. 20 - для швидкого тесту.
-# Для гарних результатів можна поставити 50-100.
-BATCH_SIZE = 32  # Розмір "пачки" даних за один крок навчання.
-
-# Проходимо по двох словниках, які ми створили в Частині 1
-# (raw_datasets, normalized_datasets)
 all_experiments = {
     "Normalized": normalized_datasets,
     "Raw (Unnormalized)": raw_datasets
@@ -279,68 +217,54 @@ all_experiments = {
 
 for data_type, datasets in all_experiments.items():
     print(f"\n--- ОБРОБКА ТИПУ ДАНИХ: {data_type} ---")
-
-    # Проходимо по 5 розмірах вікна (n)
     for n_steps in n_steps_list:
         start_time = time.time()
         print(f"  > Початок експерименту: n = {n_steps}, Тип: {data_type}")
 
-        # 1. Отримуємо дані
+        # 1. Отримання даних
         X, y = datasets[n_steps]
 
-        # 2. Розбиваємо дані
+        # 2. Розбиття даних
         X_train, y_train, X_val, y_val, X_test, y_test = \
             split_sequences(X, y, train_percent, val_percent)
 
-        # 3. ВАЖЛИВИЙ КРОК: Зміна форми X для LSTM
-        # LSTM очікує 3D-вхід: (кількість_прикладів, кроки_часу, кількість_ознак)
-        # Наші X_train зараз (N, n_steps). Треба (N, n_steps, 1)
-        # 1 - це 1 ознака (тільки температура)
+        # 3. Зміна форми X для LSTM (N, steps, features)
         n_features = 1
         X_train_3d = X_train.reshape((X_train.shape[0], X_train.shape[1], n_features))
         X_val_3d = X_val.reshape((X_val.shape[0], X_val.shape[1], n_features))
         X_test_3d = X_test.reshape((X_test.shape[0], X_test.shape[1], n_features))
 
-        # 4. Будуємо модель
+        # 4. Побудова моделі
         model = build_model(n_steps_in=n_steps, n_features_in=n_features)
 
-        # 5. Навчаємо модель
+        # 5. Навчання моделі
         print(f"    ...Навчання ({EPOCHS} епох)...")
         history = model.fit(
-            X_train_3d,
-            y_train,
-            epochs=EPOCHS,
-            batch_size=BATCH_SIZE,
+            X_train_3d, y_train,
+            epochs=EPOCHS, batch_size=BATCH_SIZE,
             validation_data=(X_val_3d, y_val),
-            verbose=0  # 0=тихий режим, 1=показувати прогрес
+            verbose=0  # 0=тихий режим
         )
         print("    ...Навчання завершено.")
 
         # 6. Оцінка на тестових даних
-        # .predict() повертає прогнози
         y_pred = model.predict(X_test_3d)
 
         # 7. Розрахунок помилки (RMSE)
-        # Помилку треба рахувати в ОДНАКОВОМУ МАСШТАБІ (градусах Цельсія)
-
+        # Помилка розраховується в однакових одиницях (градусах Цельсія)
         if data_type == "Normalized":
-            # 7a. Якщо дані нормалізовані, ми ПОВЕРТАЄМО їх до
-            # початкового масштабу перед розрахунком помилки
-            # .inverse_transform() очікує 2D-масив
+            # 7a. Для нормалізованих даних, повертаємо прогноз до початкового масштабу
             y_test_inv = scaler.inverse_transform(y_test.reshape(-1, 1))
             y_pred_inv = scaler.inverse_transform(y_pred)
-
-            # Рахуємо RMSE на "справжніх", де-нормалізованих даних
             rmse = math.sqrt(mean_squared_error(y_test_inv, y_pred_inv))
-
-        else:  # data_type == "Raw (Unnormalized)"
-            # 7b. Якщо дані "сирі", просто рахуємо RMSE
+        else:
+            # 7b. Для "сирих" даних, просто рахуємо RMSE
             rmse = math.sqrt(mean_squared_error(y_test, y_pred))
 
         end_time = time.time()
         duration = end_time - start_time
 
-        # 8. Зберігаємо результати
+        # 8. Збереження результатів
         results_list.append({
             "Data Type": data_type,
             "N (Window Size)": n_steps,
@@ -350,20 +274,209 @@ for data_type, datasets in all_experiments.items():
         })
         print(f"    > Готово! RMSE: {rmse:.3f} °C (Час: {duration:.1f} сек)")
 
-# --- Розділ 12: Таблиця результатів та аналіз (Завдання 2.4) ---
-print("\n\n--- ✅ ЧАСТИНА 2 ЗАВЕРШЕНА ---")
-print("--- Завдання 2.4: Узагальнення результатів ---")
+print("\n--- Частина 2 Завершена ---")
 
-# Створюємо Pandas DataFrame для гарної таблиці
+# --- Початок Частини 3: Врахування трендів та сезонності ---
+print("\n\n--- Початок Частини 3: Врахування трендів та сезонності ---")
+
+# --- Розділ 11: Feature Engineering (Завдання 3.1) ---
+print("--- Завдання 3.1: Створення додаткових ознак (сезонність) ---")
+
+# Створюємо DataFrame з датами для додавання ознак
+features_df = ts_daily_max.to_frame()
+dates_index = features_df.index
+day_of_year = dates_index.day_of_year
+month = dates_index.month
+
+# Набір 1: Синус/Косинус перетворення ДНЯ РОКУ (річний цикл)
+features_df['day_sin'] = np.sin(2 * np.pi * day_of_year / 365.25)
+features_df['day_cos'] = np.cos(2 * np.pi * day_of_year / 365.25)
+
+# Набір 2: Синус/Косинус перетворення МІСЯЦЯ (місячний цикл)
+features_df['month_sin'] = np.sin(2 * np.pi * month / 12)
+features_df['month_cos'] = np.cos(2 * np.pi * month / 12)
+
+# Додаємо нормалізовану температуру до DataFrame
+features_df['temp_scaled'] = data_normalized_1d
+
+print("Створено 2 набори додаткових ознак (день року, місяць).")
+
+
+# --- Розділ 12: Нова функція "ковзного вікна" для >1 ознаки ---
+def create_sequences_multivariate(data_df, n_steps, target_col_name):
+    """
+    Створює послідовності для багатовимірних даних.
+    X буде (N, n_steps, n_features)
+    y буде (N,) і братиметься з target_col_name
+    """
+    X, y = [], []
+    data_values = data_df.values
+    # Отримуємо індекс цільової колонки (яку прогнозуємо)
+    target_col_idx = data_df.columns.get_loc(target_col_name)
+
+    for i in range(len(data_values) - n_steps):
+        end_ix = i + n_steps
+        # X - це послідовність ВСІХ ознак
+        seq_x = data_values[i:end_ix, :]
+        # y - це ТІЛЬКИ температура в наступний момент часу
+        seq_y = data_values[end_ix, target_col_idx]
+        X.append(seq_x)
+        y.append(seq_y)
+    return np.array(X), np.array(y)
+
+
+print("Функцію create_sequences_multivariate() створено.\n")
+
+# --- Розділ 13: Моделювання з дод. ознаками (Завдання 3.2) ---
+print("--- Завдання 3.2: Моделювання з дод. ознаками ---")
+
+# Використовуємо n=90 як один з найкращих варіантів з Частини 2
+n_steps = 90
+
+# [ (назва, DataFrame з ознаками, кількість ознак) ]
+experiments_part3 = [
+    (
+        "Normalized + DayOfYear (n=90)",
+        features_df[['temp_scaled', 'day_sin', 'day_cos']],
+        3
+    ),
+    (
+        "Normalized + Month (n=90)",
+        features_df[['temp_scaled', 'month_sin', 'month_cos']],
+        3
+    )
+]
+
+for exp_name, exp_df, n_features in experiments_part3:
+    start_time = time.time()
+    print(f"  > Початок експерименту: {exp_name}")
+
+    # 1. Створення послідовностей
+    X, y = create_sequences_multivariate(exp_df, n_steps, 'temp_scaled')
+
+    # 2. Розбиття даних
+    X_train, y_train, X_val, y_val, X_test, y_test = \
+        split_sequences(X, y, train_percent, val_percent)
+
+    # 3. Побудова моделі (n_features_in тепер 3)
+    model = build_model(n_steps_in=n_steps, n_features_in=n_features)
+
+    # 4. Навчання моделі
+    print(f"    ...Навчання ({EPOCHS} епох)...")
+    history = model.fit(
+        X_train, y_train,
+        epochs=EPOCHS, batch_size=BATCH_SIZE,
+        validation_data=(X_val, y_val), verbose=0
+    )
+    print("    ...Навчання завершено.")
+
+    # 5. Оцінка
+    y_pred = model.predict(X_test)
+
+    # 6. Розрахунок RMSE (з поверненням до початкового масштабу)
+    y_test_inv = scaler.inverse_transform(y_test.reshape(-1, 1))
+    y_pred_inv = scaler.inverse_transform(y_pred)
+    rmse = math.sqrt(mean_squared_error(y_test_inv, y_pred_inv))
+
+    end_time = time.time()
+    duration = end_time - start_time
+
+    # 7. Збереження результатів
+    results_list.append({
+        "Data Type": exp_name,
+        "N (Window Size)": n_steps,
+        "RMSE (Test)": rmse,
+        "Time (sec)": duration,
+        "Epochs": EPOCHS
+    })
+    print(f"    > Готово! RMSE: {rmse:.3f} °C (Час: {duration:.1f} сек)")
+
+# --- Розділ 14: Модифікація архітектури (Завдання 3.3) ---
+print("\n--- Завдання 3.3: Моделювання зі Stacked LSTM ---")
+
+
+def build_stacked_model(n_steps_in, n_features_in):
+    """
+    Створює "глибоку" (stacked) модель з двома шарами LSTM.
+    """
+    model = Sequential()
+    input_shape = (n_steps_in, n_features_in)
+
+    # Шар 1: return_sequences=True для передачі повної послідовності наступному шару
+    model.add(LSTM(50, activation='relu', return_sequences=True, input_shape=input_shape))
+
+    # Шар 2:
+    model.add(LSTM(50, activation='relu'))
+
+    # Вихідний шар
+    model.add(Dense(1))
+
+    model.compile(optimizer='adam', loss='mean_squared_error')
+    return model
+
+
+print("Функцію build_stacked_model() створено.")
+
+# Тестуємо stacked-модель на найкращому наборі ознак (DayOfYear)
+start_time = time.time()
+exp_name = "Stacked LSTM + DayOfYear (n=90)"
+n_steps = 90
+n_features = 3
+print(f"  > Початок експерименту: {exp_name}")
+
+# 1. Готуємо дані (аналогічно до Розділу 13)
+exp_df = features_df[['temp_scaled', 'day_sin', 'day_cos']]
+X, y = create_sequences_multivariate(exp_df, n_steps, 'temp_scaled')
+X_train, y_train, X_val, y_val, X_test, y_test = \
+    split_sequences(X, y, train_percent, val_percent)
+
+# 2. Будуємо "глибоку" модель
+stacked_model = build_stacked_model(n_steps_in=n_steps, n_features_in=n_features)
+
+# 3. Навчаємо
+print(f"    ...Навчання ({EPOCHS} епох)...")
+history = stacked_model.fit(
+    X_train, y_train,
+    epochs=EPOCHS, batch_size=BATCH_SIZE,
+    validation_data=(X_val, y_val), verbose=0
+)
+print("    ...Навчання завершено.")
+
+# 4. Оцінка
+y_pred = stacked_model.predict(X_test)
+
+# 5. Розрахунок RMSE
+y_test_inv = scaler.inverse_transform(y_test.reshape(-1, 1))
+y_pred_inv = scaler.inverse_transform(y_pred)
+rmse = math.sqrt(mean_squared_error(y_test_inv, y_pred_inv))
+
+end_time = time.time()
+duration = end_time - start_time
+
+# 6. Збереження результату
+results_list.append({
+    "Data Type": exp_name,
+    "N (Window Size)": n_steps,
+    "RMSE (Test)": rmse,
+    "Time (sec)": duration,
+    "Epochs": EPOCHS
+})
+print(f"    > Готово! RMSE: {rmse:.3f} °C (Час: {duration:.1f} сек)")
+
+# --- Фінальні результати ---
+print("\n\n--- Всі експерименти завершено ---")
+print("--- Загальна таблиця результатів (Частини 2 та 3) ---")
+
+# Створення фінального DataFrame з результатами
 results_df = pd.DataFrame(results_list)
 
-# Сортуємо для зручності: спочатку тип даних, потім розмір вікна
-results_df.sort_values(by=["Data Type", "N (Window Size)"], inplace=True)
+# Сортування за RMSE (від найкращого до найгіршого)
+results_df.sort_values(by="RMSE (Test)", inplace=True)
 
 print(results_df)
 
-# Зберігаємо у CSV для звіту
-results_df.to_csv('lab3_part2_results.csv', index=False)
-print("\nРезультати збережено у 'lab3_part2_results.csv'")
+# Збереження у CSV для звіту
+results_df.to_csv('lab3_FINAL_results.csv', index=False)
+print("\nРезультати збережено у 'lab3_FINAL_results.csv'")
 
-print("\n--- ✅ Кінець Частини 2 ---")
+print("\n--- Кінець роботи ---")
